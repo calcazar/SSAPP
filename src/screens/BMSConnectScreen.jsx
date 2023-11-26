@@ -1,80 +1,26 @@
-import React, {useEffect, useState} from 'react';
+import React from 'react';
 import {
   SafeAreaView,
   ScrollView,
   Text,
-  View,
   TouchableOpacity,
   StyleSheet,
-  PermissionsAndroid,
-  Platform,
-  NativeEventEmitter,
 } from 'react-native';
-import BleManager, {BleManagerModule} from 'react-native-ble-manager';
-
-import useBMSStore from '../stores/BMS';
+import useBluetoothManager from '../hooks/useBluetoothManager'; // Adjust path as needed
 import HR from '../components/HR';
 
 const BMSConnectScreen = ({navigation}) => {
-  const BMSStore = useBMSStore(state => state);
-  const [devices, setDevices] = useState([]);
+  const {devices, scanForDevices, connectToDevice} = useBluetoothManager();
 
-  useEffect(() => {
-    BleManager.start({showAlert: false});
-
-    const bleManagerEmitter = new NativeEventEmitter(BleManagerModule);
-
-    const handleDiscoverPeripheral = peripheral => {
-      if (peripheral.name === 'JLS-098') {
-        setDevices(oldArray => [...oldArray, peripheral]);
-      }
-    };
-
-    bleManagerEmitter.addListener(
-      'BleManagerDiscoverPeripheral',
-      handleDiscoverPeripheral,
-    );
-
-    // Request for permissions in Android
-    if (Platform.OS === 'android' && Platform.Version >= 23) {
-      PermissionsAndroid.check(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      ).then(result => {
-        if (result) {
-          console.log('Permission is OK');
-        } else {
-          PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          ).then(result => {
-            if (result) {
-              console.log('User accepted');
-            } else {
-              console.log('User refused');
-            }
-          });
-        }
+  const handleConnect = device => {
+    connectToDevice(device)
+      .then(peripheralInfo => {
+        console.log('Retrieved peripheral info:', peripheralInfo);
+        navigation.navigate('BMS', {deviceId: device.id});
+      })
+      .catch(error => {
+        console.error('Connection error', error);
       });
-    }
-
-    return () => {
-      bleManagerEmitter.removeListener(
-        'BleManagerDiscoverPeripheral',
-        handleDiscoverPeripheral,
-      );
-    };
-  }, []);
-
-  const scanForDevices = () => {
-    BleManager.scan([], 5, true).then(() => {
-      console.log('Scanning started');
-      setDevices([]); // Clear previous results
-    });
-  };
-
-  const connect = device => {
-    // Add your connection logic here
-    console.log('Connecting to device', device);
-    navigation.navigate('BMS');
   };
 
   return (
@@ -87,7 +33,7 @@ const BMSConnectScreen = ({navigation}) => {
         {devices.map((device, index) => (
           <TouchableOpacity
             key={index}
-            onPress={() => connect(device)}
+            onPress={() => handleConnect(device)}
             style={styles.connectButton}>
             <Text>BMS ID: {device.id}</Text>
           </TouchableOpacity>

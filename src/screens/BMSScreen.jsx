@@ -1,4 +1,4 @@
-import {useEffect} from 'react';
+import {useEffect, useState} from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -11,18 +11,97 @@ import {Colors} from 'react-native/Libraries/NewAppScreen';
 import useBMSStore from '../stores/BMS';
 import {PieChart, BarChart} from 'react-native-gifted-charts';
 import HR from '../components/HR';
+import {Buffer} from 'buffer';
+import {NativeModules, NativeEventEmitter} from 'react-native';
+import BleManager from 'react-native-ble-manager';
 
-const BMSScreen = ({navigation}) => {
-  const isDarkMode = useColorScheme() === 'dark';
+const BleManagerModule = NativeModules.BleManager;
+const bleManagerEmitter = new NativeEventEmitter(BleManagerModule);
+
+const BMSScreen = ({route, navigation}) => {
+  const [failedState, setFailedState] = useState(false);
+  const [requestInFlight, setRequestInFlight] = useState(false);
   const BMSStore = useBMSStore(state => state);
-
+  const {deviceId} = route.params;
   const backgroundStyle = {
     backgroundColor: 'white',
   };
 
+  const listenToCharacteristic = async () => {
+    const serviceUUID = 'ff00';
+    const characteristicUUID = 'ff01';
+
+    try {
+      await BleManager.retrieveServices(deviceId);
+
+      await BleManager.startNotification(
+        deviceId,
+        serviceUUID,
+        characteristicUUID,
+      );
+      console.log(
+        'Notification started for characteristic ' + characteristicUUID,
+      );
+
+      bleManagerEmitter.addListener(
+        'BleManagerDidUpdateValueForCharacteristic',
+        props => {
+          const {value, peripheral, characteristic, service} = props;
+          console.log('Notification received from ' + characteristic);
+          const receivedData = value
+            .map(byte => byte.toString(16).padStart(2, '0'))
+            .join('');
+          BMSStore.getCellVoltages(receivedData);
+          setRequestInFlight(false);
+        },
+      );
+    } catch (error) {
+      console.error('Notification error', error);
+    }
+  };
+
+  const writeDataToDevice = async () => {
+    const serviceUUID = 'ff00';
+    const characteristicUUID = 'ff02';
+
+    // Create a Buffer with the bytes
+    const dataToSend = Buffer.from([0x24, 0x3a, 0x25]);
+
+    try {
+      await BleManager.retrieveServices(deviceId);
+      await BleManager.writeWithoutResponse(
+        deviceId,
+        serviceUUID,
+        characteristicUUID,
+        dataToSend.toJSON().data,
+      );
+
+      console.log('Data written');
+    } catch (error) {
+      console.error('Failed to write data to device:', error);
+      setFailedState(true);
+      navigation.navigate('BMSConnect');
+    }
+  };
+
+  const getBLEData = async () => {
+    console.log('get ble data called');
+    if (!requestInFlight && !failedState) {
+      setRequestInFlight(true);
+      setTimeout(() => {
+        console.log('set time out call');
+        writeDataToDevice();
+      }, 2000);
+    }
+  };
+
   useEffect(() => {
-    BMSStore.getCellVoltages();
+    setFailedState(false);
+    listenToCharacteristic();
+    const intervalId = setInterval(getBLEData, 2000); // Adjust interval as needed
+    return () => clearInterval(intervalId); // Clear on cleanup
   }, []);
+
   return (
     <SafeAreaView style={backgroundStyle}>
       <ScrollView>
@@ -50,6 +129,7 @@ const BMSScreen = ({navigation}) => {
         <TouchableOpacity
           onPress={() => {
             navigation.navigate('BMSSettings');
+            // getBLEData();
           }}
           activeOpacity={0.5}
           style={{
@@ -72,19 +152,26 @@ const BMSScreen = ({navigation}) => {
           }}>
           <View>
             <Text style={{marginBottom: 8}}>
+              Total Voltage: {BMSStore.totalVoltage}
+            </Text>
+            <Text style={{marginBottom: 8}}>
               Average Cell Voltage: {BMSStore.averageCellVoltage}
             </Text>
-            <Text>Cell Count: {BMSStore.cellCount}</Text>
+            <Text style={{marginBottom: 8}}>
+              Cell Count: {BMSStore.cellCount}
+            </Text>
+            <Text>Voltage Diviation: {BMSStore.voltageDeviation}</Text>
           </View>
           <View style={{flex: 1, marginLeft: 10}}>
             <Text style={{marginBottom: 8}}>
               Highest Cell: Cell {BMSStore.highestCellInPack.cell} @{' '}
               {BMSStore.highestCellInPack.voltage}
             </Text>
-            <Text>
+            <Text style={{marginBottom: 8}}>
               Lowest Cell: Cell {BMSStore.lowestCellInPack.cell} @{' '}
               {BMSStore.lowestCellInPack.voltage}
             </Text>
+            <Text>Voltage Difference: {BMSStore.voltageDifference}</Text>
           </View>
         </View>
 
@@ -100,7 +187,6 @@ const BMSScreen = ({navigation}) => {
               paddingLeft: 20,
             }}>
             <BarChart
-              isAnimated
               width={300}
               disableScroll
               hideYAxisText
@@ -114,14 +200,6 @@ const BMSScreen = ({navigation}) => {
               endSpacing={0}
             />
           </View>
-
-          {/* {BMSStore.cellVoltages.map((cellVoltage, index) => {
-            return (
-              <Text key={`cell-${index}`}>
-                Cell {index + 1}: {cellVoltage}
-              </Text>
-            );
-          })} */}
         </View>
       </ScrollView>
     </SafeAreaView>
